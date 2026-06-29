@@ -173,7 +173,7 @@ describe("runHiringCafe", () => {
       expect.stringContaining("https://hiring.cafe/"),
       expect.objectContaining({
         headers: expect.objectContaining({
-          "user-agent": "Mozilla/5.0 (compatible; JobOps/1.0)",
+          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }),
       }),
     );
@@ -224,7 +224,7 @@ describe("runHiringCafe", () => {
       "https://hiring.cafe/job/req-1",
       expect.objectContaining({
         headers: expect.objectContaining({
-          "user-agent": "Mozilla/5.0 (compatible; JobOps/1.0)",
+          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }),
       }),
     );

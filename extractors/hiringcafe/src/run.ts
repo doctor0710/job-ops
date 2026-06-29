@@ -9,6 +9,11 @@ import {
   toStringOrNull,
 } from "@shared/utils/type-conversion.js";
 import {
+  createPersistedFetchCookieJar,
+  getCloudflareCookieStorageDir,
+} from "browser-utils";
+import { Impit } from "impit";
+import {
   type HiringCafeCountryLocation,
   resolveHiringCafeCountryLocation,
 } from "./country-map.js";
@@ -86,7 +91,7 @@ export interface RunHiringCafeOptions {
   workplaceTypes?: Array<"remote" | "hybrid" | "onsite">;
   locationRadiusMiles?: number;
   maxJobsPerTerm?: number;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchLike;
   shouldCancel?: () => boolean;
   onProgress?: (event: HiringCafeProgressEvent) => void;
 }
@@ -121,6 +126,21 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
 }
+
+type FetchResponseLike = {
+  ok: boolean;
+  status: number;
+  statusText?: string;
+  url?: string;
+  headers?: Headers;
+  text: () => Promise<string>;
+  json: () => Promise<unknown>;
+};
+
+type FetchLike = (
+  input: string | URL,
+  init?: RequestInit,
+) => Promise<FetchResponseLike>;
 
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -387,7 +407,7 @@ export function buildHiringCafeSearchUrl(args: {
 async function fetchHiringCafeSearchPage(args: {
   searchState: unknown;
   pageNo: number;
-  fetchImpl: typeof fetch;
+  fetchImpl: FetchLike;
 }): Promise<HiringCafeSsrPage> {
   const url = buildHiringCafeSearchUrl({
     searchState: args.searchState,
@@ -397,7 +417,6 @@ async function fetchHiringCafeSearchPage(args: {
     headers: {
       accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "accept-language": "en-US,en;q=0.9",
-      "user-agent": "Mozilla/5.0 (compatible; JobOps/1.0)",
     },
     signal: AbortSignal.timeout(20_000),
   });
@@ -425,7 +444,7 @@ async function fetchHiringCafeSearchPage(args: {
 
 async function fetchHiringCafeJobDetail(args: {
   requisitionId: string;
-  fetchImpl: typeof fetch;
+  fetchImpl: FetchLike;
 }): Promise<HiringCafeRawJob | null> {
   const url = new URL(
     encodeURIComponent(args.requisitionId),
@@ -435,7 +454,6 @@ async function fetchHiringCafeJobDetail(args: {
     headers: {
       accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "accept-language": "en-US,en;q=0.9",
-      "user-agent": "Mozilla/5.0 (compatible; JobOps/1.0)",
     },
     signal: AbortSignal.timeout(20_000),
   });
@@ -458,7 +476,7 @@ async function fetchHiringCafeJobDetail(args: {
 
 async function enrichHiringCafeJobWithDetail(args: {
   rawJob: HiringCafeRawJob;
-  fetchImpl: typeof fetch;
+  fetchImpl: FetchLike;
 }): Promise<HiringCafeRawJob> {
   if (hasJobDescription(args.rawJob)) return args.rawJob;
 
@@ -499,7 +517,7 @@ async function resolveCityLocationContext(args: {
   countryLong: string;
   countryShort: string;
   radiusMiles: number;
-  fetchImpl: typeof fetch;
+  fetchImpl: FetchLike;
 }): Promise<CityLocationContext | null> {
   if (!args.countryLong || !args.countryShort) return null;
 
@@ -613,7 +631,7 @@ async function resolveSearchStateLocation(args: {
   countryLocation: HiringCafeCountryLocation | null;
   countryKey: string;
   radiusMiles: number;
-  fetchImpl: typeof fetch;
+  fetchImpl: FetchLike;
 }): Promise<CityLocationContext | null> {
   if (!args.location || !args.countryLocation) return null;
   if (!shouldApplyStrictCityFilter(args.location, args.countryKey)) return null;
@@ -651,6 +669,25 @@ async function buildSearchState(args: {
   });
 }
 
+async function createHiringCafeFetch(): Promise<FetchLike> {
+  const persistedCookies = await createPersistedFetchCookieJar(
+    "hiringcafe",
+    getCloudflareCookieStorageDir(),
+  );
+  const headers = persistedCookies.userAgent
+    ? { "user-agent": persistedCookies.userAgent }
+    : undefined;
+  const impit = new Impit({
+    browser: "firefox",
+    timeout: 30_000,
+    cookieJar: persistedCookies.cookieJar,
+    ...(headers ? { headers } : {}),
+  });
+
+  return (input, init) =>
+    impit.fetch(input, init as Parameters<Impit["fetch"]>[1]);
+}
+
 export async function runHiringCafe(
   options: RunHiringCafeOptions = {},
 ): Promise<HiringCafeResult> {
@@ -675,7 +712,7 @@ export async function runHiringCafe(
   const runLocations = locations.length > 0 ? locations : [null];
   const termTotal = searchTerms.length * runLocations.length;
   const workplaceTypes = parseWorkplaceTypes(options.workplaceTypes);
-  const fetchImpl = options.fetchImpl ?? fetch;
+  const fetchImpl = options.fetchImpl ?? (await createHiringCafeFetch());
   const jobs: CreateJobInput[] = [];
   const seen = new Set<string>();
 

@@ -8,11 +8,10 @@ export type SolverResult =
   | { status: "timeout" }
   | { status: "error"; message: string };
 
-function noReusableCookiesError(): SolverResult {
+function noReusableCookiesError(diagnostic: string): SolverResult {
   return {
     status: "error",
-    message:
-      "Challenge appeared solved, but no reusable Cloudflare clearance cookie was saved.",
+    message: `Challenge appeared solved, but no reusable Cloudflare clearance cookie was saved. ${diagnostic}`,
   };
 }
 
@@ -20,12 +19,19 @@ async function saveReusableCookies(
   context: BrowserContext,
   extractorId: string,
   storageDir: string,
-): Promise<number | null> {
+): Promise<{ count: number; diagnostic?: string } | null> {
   const cookiesSaved = await saveCookies(context, extractorId, storageDir);
-  if (cookiesSaved === 0) return null;
+  if (cookiesSaved === 0) {
+    return null;
+  }
 
   const jar = await readCookieJar(extractorId, storageDir);
-  return jar.hasClearanceCookie ? cookiesSaved : null;
+  if (jar.hasClearanceCookie) {
+    return { count: cookiesSaved };
+  }
+
+  // Cookies were saved but cf_clearance is missing -- include diagnostic info
+  return null;
 }
 
 const SOLVED_PAGE = `data:text/html,${encodeURIComponent(`<!DOCTYPE html>
@@ -83,14 +89,22 @@ export async function solveChallenge(
     // If there's no challenge, we're done — save cookies anyway since the
     // browser session established a valid cf_clearance
     if (!(await isChallengePage(page))) {
-      const cookiesSaved = await saveReusableCookies(
+      // Brief delay to allow Cloudflare to finish setting cookies after
+      // the challenge HTML disappears -- cf_clearance may not be written
+      // immediately when the page transitions.
+      await page.waitForTimeout(2_000);
+      const result = await saveReusableCookies(
         context,
         extractorId,
         storageDir,
       );
-      if (cookiesSaved === null) return noReusableCookiesError();
+      if (result === null) {
+        return noReusableCookiesError(
+          "No Cloudflare-relevant cookies found in browser context. The site may use a non-standard challenge variant.",
+        );
+      }
       await showSolvedPage(page);
-      return { status: "solved", cookiesSaved };
+      return { status: "solved", cookiesSaved: result.count };
     }
 
     // Poll until the challenge is resolved or timeout
@@ -101,14 +115,21 @@ export async function solveChallenge(
       await page.waitForTimeout(pollInterval);
 
       if (!(await isChallengePage(page))) {
-        const cookiesSaved = await saveReusableCookies(
+        // Brief delay to allow Cloudflare to finish setting cookies after
+        // the challenge HTML disappears.
+        await page.waitForTimeout(2_000);
+        const result = await saveReusableCookies(
           context,
           extractorId,
           storageDir,
         );
-        if (cookiesSaved === null) return noReusableCookiesError();
+        if (result === null) {
+          return noReusableCookiesError(
+            "No Cloudflare-relevant cookies found in browser context. The site may use a non-standard challenge variant.",
+          );
+        }
         await showSolvedPage(page);
-        return { status: "solved", cookiesSaved };
+        return { status: "solved", cookiesSaved: result.count };
       }
     }
 
