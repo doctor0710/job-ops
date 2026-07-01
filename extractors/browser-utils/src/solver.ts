@@ -92,7 +92,7 @@ export async function solveChallenge(
       // Brief delay to allow Cloudflare to finish setting cookies after
       // the challenge HTML disappears -- cf_clearance may not be written
       // immediately when the page transitions.
-      await page.waitForTimeout(2_000);
+      await page.waitForTimeout(120_000);
       const result = await saveReusableCookies(
         context,
         extractorId,
@@ -117,7 +117,7 @@ export async function solveChallenge(
       if (!(await isChallengePage(page))) {
         // Brief delay to allow Cloudflare to finish setting cookies after
         // the challenge HTML disappears.
-        await page.waitForTimeout(2_000);
+        await page.waitForTimeout(120_000);
         const result = await saveReusableCookies(
           context,
           extractorId,
